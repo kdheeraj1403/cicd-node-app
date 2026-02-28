@@ -3,9 +3,9 @@ const app = express();
 const port = 3000;
 
 app.get('/', (req, res) => {
-  res.send('CI/CD Pipeline Working 🚀');
+  res.send('Deployment Successful 🚀');
 });
 
 app.listen(port, () => {
-  console.log(`App running on port ${port}`);
+  console.log(`App is running on port ${port}`);
 });
