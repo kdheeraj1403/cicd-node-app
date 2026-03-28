@@ -1,4 +1,4 @@
-name: CI-CD Pipeline
+name: CI-CD with ECR
 
 on:
   push:
@@ -6,21 +6,42 @@ on:
       - main
 
 jobs:
-  build-test-deploy:
+
+  build-and-push:
+
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
+
+    - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Login to Docker Hub
-      run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Build Docker Image
-      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/cicd-node-app:latest .
+    - name: Login to ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Push Docker Image
-      run: docker push ${{ secrets.DOCKER_USERNAME }}/cicd-node-app:latest
+    - name: Build image
+      run: |
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest .
+
+    - name: Push image to ECR
+      run: |
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+  deploy:
+
+    needs: build-and-push
+
+    runs-on: ubuntu-latest
+
+    steps:
 
     - name: Deploy to EC2
       uses: appleboy/ssh-action@v1.0.3
@@ -29,7 +50,16 @@ jobs:
         username: ec2-user
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
+
+          aws ecr get-login-password --region us-east-1 \
+          | docker login \
+          --username AWS \
+          --password-stdin ${{ steps.login-ecr.outputs.registry }}
+
           docker stop cicd-node-app || true
           docker rm cicd-node-app || true
-          docker pull ${{ secrets.DOCKER_USERNAME }}/cicd-node-app:latest
-          docker run -d -p 3000:3000 --name cicd-node-app ${{ secrets.DOCKER_USERNAME }}/cicd-node-app:latest
+
+          docker pull ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+          docker run -d -p 3000:3000 --name deerajaws/cicd-node-app \
+          ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
