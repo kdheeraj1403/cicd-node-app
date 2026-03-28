@@ -1,22 +1,102 @@
-name: CI-CD using ECR
+# name: CI-CD using ECR
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+# env:
+#   AWS_REGION: ap-south-1
+#   ECR_REPOSITORY: cicd-node-app
+
+# jobs:
+
+#   build-and-push:
+
+#     runs-on: ubuntu-latest
+
+#     outputs:
+#       image_uri: ${{ steps.build-image.outputs.image_uri }}
+
+#     steps:
+
+#     - name: Checkout code
+#       uses: actions/checkout@v3
+
+#     - name: Configure AWS credentials
+#       uses: aws-actions/configure-aws-credentials@v4
+#       with:
+#         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#         aws-region: ${{ env.AWS_REGION }}
+
+#     - name: Login to ECR
+#       id: login-ecr
+#       uses: aws-actions/amazon-ecr-login@v2
+
+#     - name: Build Docker image
+#       id: build-image
+#       run: |
+#         IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+#         echo "IMAGE_URI=$IMAGE_URI"
+
+#         docker build -t $IMAGE_URI .
+
+#         echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+#     - name: Push Docker image
+#       run: |
+#         docker push ${{ steps.build-image.outputs.image_uri }}
+
+
+#   deploy:
+
+#     needs: build-and-push
+
+#     runs-on: ubuntu-latest
+
+#     steps:
+
+#     - name: Deploy to EC2
+#       uses: appleboy/ssh-action@v1.0.3
+#       with:
+#         host: ${{ secrets.EC2_HOST }}
+#         username: ec2-user
+#         key: ${{ secrets.EC2_SSH_KEY }}
+#         script: |
+
+#           IMAGE_URI="${{ needs.build-and-push.outputs.image_uri }}"
+
+#           echo "Deploying image: $IMAGE_URI"
+
+#           aws ecr get-login-password --region ap-south-1 \
+#           | docker login \
+#           --username AWS \
+#           --password-stdin $(echo $IMAGE_URI | cut -d'/' -f1)
+
+#           docker stop cicd-node-app || true
+#           docker rm cicd-node-app || true
+
+#           docker pull $IMAGE_URI
+
+#           docker run -d \
+#           -p 3000:3000 \
+#           --name cicd-node-app \
+#           --restart always \
+#           $IMAGE_URI
+      
+name: CI-CD with ECR
 
 on:
   push:
     branches:
       - main
 
-env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-
 jobs:
 
   build-and-push:
 
     runs-on: ubuntu-latest
-
-    outputs:
-      image_uri: ${{ steps.build-image.outputs.image }}
 
     steps:
 
@@ -34,16 +114,13 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build Docker image
-      id: build-image
+    - name: Build image
       run: |
-        IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-        docker build -t $IMAGE_URI .
-        echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest .
 
-    - name: Push Docker image
+    - name: Push image to ECR
       run: |
-        docker push ${{ steps.build-image.outputs.image }}
+        docker push ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
 
   deploy:
 
@@ -61,20 +138,15 @@ jobs:
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
 
-          IMAGE_URI=${{ needs.build-and-push.outputs.image_uri }}
-
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+          aws ecr get-login-password --region us-east-1 \
           | docker login \
           --username AWS \
-          --password-stdin $(echo $IMAGE_URI | cut -d'/' -f1)
+          --password-stdin ${{ steps.login-ecr.outputs.registry }}
 
           docker stop cicd-node-app || true
           docker rm cicd-node-app || true
 
-          docker pull $IMAGE_URI
+          docker pull ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
 
-          docker run -d \
-          -p 3000:3000 \
-          --name cicd-node-app \
-          --restart always \
-          $IMAGE_URI
+          docker run -d -p 3000:3000 --name deerajaws/cicd-node-app \
+          ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
