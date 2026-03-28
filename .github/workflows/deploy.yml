@@ -75,6 +75,6 @@ jobs:
 
           docker run -d \
           -p 3000:3000 \
-          --name deerajaws/cicd-node-app \
+          --name cicd-node-app \
           --restart always \
           $IMAGE_URI
