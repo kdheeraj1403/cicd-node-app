@@ -1,15 +1,22 @@
-name: CI-CD with ECR
+name: CI-CD using ECR
 
 on:
   push:
     branches:
       - main
 
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+
 jobs:
 
   build-and-push:
 
     runs-on: ubuntu-latest
+
+    outputs:
+      image_uri: ${{ steps.build-image.outputs.image }}
 
     steps:
 
@@ -27,13 +34,16 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build image
+    - name: Build Docker image
+      id: build-image
       run: |
-        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest .
+        IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+        docker build -t $IMAGE_URI .
+        echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-    - name: Push image to ECR
+    - name: Push Docker image
       run: |
-        docker push ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
+        docker push ${{ steps.build-image.outputs.image }}
 
   deploy:
 
@@ -51,15 +61,20 @@ jobs:
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
 
-          aws ecr get-login-password --region us-east-1 \
+          IMAGE_URI=${{ needs.build-and-push.outputs.image_uri }}
+
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
           | docker login \
           --username AWS \
-          --password-stdin ${{ steps.login-ecr.outputs.registry }}
+          --password-stdin $(echo $IMAGE_URI | cut -d'/' -f1)
 
           docker stop cicd-node-app || true
           docker rm cicd-node-app || true
 
-          docker pull ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker pull $IMAGE_URI
 
-          docker run -d -p 3000:3000 --name deerajaws/cicd-node-app \
-          ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker run -d \
+          -p 3000:3000 \
+          --name deerajaws/cicd-node-app \
+          --restart always \
+          $IMAGE_URI
